@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual Stress Test</title>
+    <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --square-color: #222;
+            --active-color: #00d2ff;
+            --error-color: #ff4757;
+        }
+
+        body {
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: var(--bg-color);
+            color: white;
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.5s;
+        }
+
+        .mode-2-pulse { animation: pulseRed var(--pulse-speed, 4s) infinite ease-in-out; }
+        @keyframes pulseRed { 0%, 100% { background-color: #0a0a0a; } 50% { background-color: #4a0000; } }
+
+        #game-container {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            grid-gap: 15px;
+            margin-top: 20px;
+            opacity: 1;
+            transition: opacity 0.5s;
+        }
+
+        .square {
+            width: 100px;
+            height: 100px;
+            background-color: var(--square-color);
+            border-radius: 12px;
+            cursor: pointer;
+            border: 2px solid #333;
+        }
+
+        .square.highlight { background-color: var(--active-color); border-color: #fff; box-shadow: 0 0 30px var(--active-color); }
+        .hidden { display: none !important; }
+        .ui { text-align: center; max-width: 400px; }
+        
+        button {
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            background: white;
+            color: black;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        #timer-screen { font-size: 3rem; font-weight: bold; color: #555; }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen" class="ui">
+        <h1>Hello</h1>
+        <p>You will play two games back-to-back. Click the squares and follow the pattern.</p>
+        <button onclick="initDualGame()">Begin Challenge</button>
+    </div>
+
+    <div id="timer-screen" class="hidden">5</div>
+
+    <div id="game-ui" class="ui hidden">
+       
+        <p id="round-display">Round: 1</p>
+        <div id="game-container">
+            <div class="square" data-index="0"></div>
+            <div class="square" data-index="1"></div>
+            <div class="square" data-index="2"></div>
+            <div class="square" data-index="3"></div>
+            <div class="square" data-index="4"></div>
+            <div class="square" data-index="5"></div>
+            <div class="square" data-index="6"></div>
+            <div class="square" data-index="7"></div>
+            <div class="square" data-index="8"></div>
+        </div>
+    </div>
+
+    <div id="end-screen" class="ui hidden">
+        <h1>Challenge Complete</h1>
+        <p id="final-results"></p>
+        <button onclick="location.reload()">Restart</button>
+    </div>
+
+    <script>
+        let gameQueue = [];
+        let currentMode = null;
+        let round = 1;
+        let sequence = [];
+        let userSequence = [];
+        let isPlayingSequence = false;
+        let audioCtx, heartbeatInterval;
+        let scores = {};
+
+        const squares = document.querySelectorAll('.square');
+
+        // Initial setup: Randomize which mode goes first
+        function initDualGame() {
+            const modes = ['Auditory', 'Visual'];
+            gameQueue = modes.sort(() => Math.random() - 0.5);
+            document.getElementById('start-screen').classList.add('hidden');
+            startNextGameFromQueue();
+        }
+
+        async function startNextGameFromQueue() {
+            if (gameQueue.length === 0) {
+                showFinalResults();
+                return;
+            }
+
+            currentMode = gameQueue.shift();
+            round = 1;
+            
+            // UI Preparation
+            document.getElementById('game-ui').classList.remove('hidden');
+        
+            
+            setupModeEffects();
+            nextRound();
+        }
+
+        function setupModeEffects() {
+            // Clean up old effects
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            document.body.classList.remove('mode-2-pulse');
+
+            if (currentMode === 'Auditory') {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                updateHeartbeat();
+            } else {
+                document.body.classList.add('mode-2-pulse');
+                document.documentElement.style.setProperty('--pulse-speed', '1s');
+            }
+        }
+
+        function updateHeartbeat() {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            const tempo = Math.max(200, 1000 - (round * 80));
+            heartbeatInterval = setInterval(() => {
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = 'sine'; osc.frequency.value = 60;
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                osc.connect(g); g.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+            }, tempo);
+        }
+
+        function nextRound() {
+            userSequence = [];
+            isPlayingSequence = true;
+            document.getElementById('round-display').innerText = `Round: ${round}`;
+            
+            sequence = Array.from({length: round}, () => Math.floor(Math.random() * 9));
+            if (currentMode === 'Auditory') updateHeartbeat();
+            playSequence();
+        }
+
+        async function playSequence() {
+            await new Promise(r => setTimeout(r, 600));
+            for (let index of sequence) {
+                squares[index].classList.add('highlight');
+                await new Promise(r => setTimeout(r, 450));
+                squares[index].classList.remove('highlight');
+                await new Promise(r => setTimeout(r, 200));
+            }
+            isPlayingSequence = false;
+        }
+
+        squares.forEach(sq => {
+            sq.onclick = (e) => {
+                if (isPlayingSequence) return;
+                const idx = parseInt(e.target.dataset.index);
+                userSequence.push(idx);
+                
+                // Visual feedback for tap
+                e.target.classList.add('highlight');
+                setTimeout(() => e.target.classList.remove('highlight'), 200);
+
+                if (userSequence[userSequence.length-1] !== sequence[userSequence.length-1]) {
+                    handleGameOver();
+                } else if (userSequence.length === sequence.length) {
+                    round++;
+                    setTimeout(nextRound, 800);
+                }
+            };
+        });
+
+        async function handleGameOver() {
+            scores[currentMode] = round - 1;
+            
+            // Stop effects
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            document.body.classList.remove('mode-2-pulse');
+            document.getElementById('game-ui').classList.add('hidden');
+
+            if (gameQueue.length > 0) {
+                await runIntermission();
+                startNextGameFromQueue();
+            } else {
+                showFinalResults();
+            }
+        }
+
+        function runIntermission() {
+            return new Promise(resolve => {
+                const timerEl = document.getElementById('timer-screen');
+                timerEl.classList.remove('hidden');
+                let count = 5;
+                timerEl.innerText = count;
+                
+                const interval = setInterval(() => {
+                    count--;
+                    timerEl.innerText = count;
+                    if (count <= 0) {
+                        clearInterval(interval);
+                        timerEl.classList.add('hidden');
+                        resolve();
+                    }
+                }, 1000);
+            });
+        }
+
+        function showFinalResults() {
+            document.getElementById('game-ui').classList.add('hidden');
+            document.getElementById('end-screen').classList.remove('hidden');
+            document.getElementById('final-results').innerHTML = `
+                Auditory Score: ${scores['Auditory'] || 0}<br>
+                Visual Score: ${scores['Visual'] || 0}
+            `;
+        }
+    </script>
+</body>
+</html>
