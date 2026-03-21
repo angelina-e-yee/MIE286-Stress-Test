@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dual Stress Test</title>
+    <title>MIE286 Research Task - Reset on Error</title>
     <style>
         :root {
             --bg-color: #0a0a0a;
@@ -23,18 +23,14 @@
             color: white;
             font-family: 'Inter', sans-serif;
             transition: background-color 0.5s;
+            overflow: hidden;
         }
-
-        .mode-2-pulse { animation: pulseRed var(--pulse-speed, 4s) infinite ease-in-out; }
-        @keyframes pulseRed { 0%, 100% { background-color: #0a0a0a; } 50% { background-color: #4a0000; } }
 
         #game-container {
             display: grid;
             grid-template-columns: repeat(3, 100px);
             grid-gap: 15px;
             margin-top: 20px;
-            opacity: 1;
-            transition: opacity 0.5s;
         }
 
         .square {
@@ -44,39 +40,70 @@
             border-radius: 12px;
             cursor: pointer;
             border: 2px solid #333;
+            transition: background-color 0.1s;
         }
 
         .square.highlight { background-color: var(--active-color); border-color: #fff; box-shadow: 0 0 30px var(--active-color); }
+        .square.wrong { background-color: var(--error-color); border-color: #fff; }
+        
         .hidden { display: none !important; }
-        .ui { text-align: center; max-width: 400px; }
+        .ui { text-align: center; max-width: 500px; padding: 20px; }
         
         button {
-            padding: 12px 30px;
-            font-size: 1.1rem;
+            padding: 15px 35px;
+            font-size: 1.2rem;
             background: white;
             color: black;
             border: none;
             border-radius: 8px;
             cursor: pointer;
             font-weight: bold;
+            margin: 10px;
         }
 
-        #timer-screen { font-size: 3rem; font-weight: bold; color: #555; }
+        #timer-screen { font-size: 4rem; font-weight: bold; color: #555; }
+
+        .mode-2-pulse {
+            animation: pulseRed var(--pulse-speed, 1000ms) infinite ease-out;
+        }
+
+        @keyframes pulseRed {
+            0% { background-color: #4a0000; }
+            100% { background-color: #0a0a0a; }
+        }
+
+        .results-table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+        .results-table th, .results-table td {
+            border: 1px solid #444;
+            padding: 5px;
+        }
+        #feedback-msg {
+            height: 20px;
+            color: var(--error-color);
+            font-weight: bold;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
 
     <div id="start-screen" class="ui">
-        <h1>Hello</h1>
-        <p>You will play two games back-to-back. Click the squares and follow the pattern.</p>
-        <button onclick="initDualGame()">Begin Challenge</button>
+        <h1>Sequence Memory Game</h1>
+        <h2>Click the squares in the same sequence as shown. There are 10 rounds, with sequence length increasinground. If you make a mistake, you must <b>you must try the sequence again</b>. You will complete 2 full games.</h2>
+        <button id="start-btn">Begin Challenge</button>
     </div>
 
     <div id="timer-screen" class="hidden">5</div>
 
     <div id="game-ui" class="ui hidden">
-       
-        <p id="round-display">Round: 1</p>
+        
+        <p id="round-display">Round: 1 / 10</p>
+        <div id="feedback-msg"></div>
         <div id="game-container">
             <div class="square" data-index="0"></div>
             <div class="square" data-index="1"></div>
@@ -92,7 +119,9 @@
 
     <div id="end-screen" class="ui hidden">
         <h1>Challenge Complete</h1>
-        <p id="final-results"></p>
+        <p>Final Data for Analysis:</p>
+        <div id="final-results" style="max-height: 300px; overflow-y: auto; background: #111; border-radius: 8px; margin-bottom: 10px;"></div>
+        <button onclick="downloadCSV()">Download CSV</button>
         <button onclick="location.reload()">Restart</button>
     </div>
 
@@ -100,16 +129,28 @@
         let gameQueue = [];
         let currentMode = null;
         let round = 1;
+        const maxRounds = 8;
         let sequence = [];
         let userSequence = [];
         let isPlayingSequence = false;
-        let audioCtx, heartbeatInterval;
-        let scores = {};
+        let audioCtx = null; 
+        let heartbeatInterval = null;
+        
+        let startTime;
+        let roundErrors = 0;
+        let resultsLog = []; 
 
         const squares = document.querySelectorAll('.square');
+        const feedbackMsg = document.getElementById('feedback-msg');
 
-        // Initial setup: Randomize which mode goes first
+        document.getElementById('start-btn').addEventListener('click', function() {
+            initDualGame();
+        });
+
         function initDualGame() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
             const modes = ['Auditory', 'Visual'];
             gameQueue = modes.sort(() => Math.random() - 0.5);
             document.getElementById('start-screen').classList.add('hidden');
@@ -121,89 +162,139 @@
                 showFinalResults();
                 return;
             }
-
             currentMode = gameQueue.shift();
             round = 1;
-            
-            // UI Preparation
             document.getElementById('game-ui').classList.remove('hidden');
-        
-            
             setupModeEffects();
             nextRound();
         }
 
         function setupModeEffects() {
-            // Clean up old effects
             if (heartbeatInterval) clearInterval(heartbeatInterval);
             document.body.classList.remove('mode-2-pulse');
 
             if (currentMode === 'Auditory') {
-                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 updateHeartbeat();
             } else {
+                updateVisualPulse();
                 document.body.classList.add('mode-2-pulse');
-                document.documentElement.style.setProperty('--pulse-speed', '1s');
             }
         }
 
         function updateHeartbeat() {
             if (heartbeatInterval) clearInterval(heartbeatInterval);
-            const tempo = Math.max(200, 1000 - (round * 80));
+            const tempo = Math.max(200, 1500 - (round * 100));
+            document.documentElement.style.setProperty('--pulse-speed', `${tempo}ms`);
+            
             heartbeatInterval = setInterval(() => {
-                const osc = audioCtx.createOscillator();
-                const g = audioCtx.createGain();
-                osc.type = 'sine'; osc.frequency.value = 60;
-                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-                osc.connect(g); g.connect(audioCtx.destination);
-                osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+                if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+                playHeartSound();
             }, tempo);
         }
 
+        function playHeartSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.type = 'sine'; 
+            osc.frequency.setValueAtTime(60, audioCtx.currentTime);
+            g.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            osc.connect(g); 
+            g.connect(audioCtx.destination);
+            osc.start(); 
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        function updateVisualPulse() {
+            const tempo = Math.max(200, 1500 - (round * 100));
+            document.documentElement.style.setProperty('--pulse-speed', `${tempo}ms`);
+        }
+
         function nextRound() {
+            if (round > maxRounds) {
+                finishCurrentMode();
+                return;
+            }
             userSequence = [];
+            roundErrors = 0;
             isPlayingSequence = true;
-            document.getElementById('round-display').innerText = `Round: ${round}`;
+            feedbackMsg.innerText = "";
+            document.getElementById('round-display').innerText = `Round: ${round} / ${maxRounds}`;
             
             sequence = Array.from({length: round}, () => Math.floor(Math.random() * 9));
             if (currentMode === 'Auditory') updateHeartbeat();
+            else updateVisualPulse();
+            
             playSequence();
         }
 
         async function playSequence() {
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 800));
             for (let index of sequence) {
                 squares[index].classList.add('highlight');
-                await new Promise(r => setTimeout(r, 450));
+                await new Promise(r => setTimeout(r, 500));
                 squares[index].classList.remove('highlight');
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 250));
             }
             isPlayingSequence = false;
+            startTime = performance.now(); 
         }
 
         squares.forEach(sq => {
-            sq.onclick = (e) => {
-                if (isPlayingSequence) return;
-                const idx = parseInt(e.target.dataset.index);
-                userSequence.push(idx);
-                
-                // Visual feedback for tap
-                e.target.classList.add('highlight');
-                setTimeout(() => e.target.classList.remove('highlight'), 200);
+    sq.onclick = (e) => {
+        // 1. Prevent clicking while the sequence is flashing
+        if (isPlayingSequence) return; 
 
-                if (userSequence[userSequence.length-1] !== sequence[userSequence.length-1]) {
-                    handleGameOver();
-                } else if (userSequence.length === sequence.length) {
-                    round++;
-                    setTimeout(nextRound, 800);
-                }
-            };
-        });
-
-        async function handleGameOver() {
-            scores[currentMode] = round - 1;
+        const idx = parseInt(e.target.dataset.index);
+        
+        // 2. Check if the click matches the current step in the sequence
+        if (idx === sequence[userSequence.length]) {
             
-            // Stop effects
+            // --- CORRECT CLICK LOGIC ---
+            e.target.classList.add('highlight');
+            setTimeout(() => e.target.classList.remove('highlight'), 200);
+            userSequence.push(idx);
+
+            // If they finished the whole string, move to next round
+            if (userSequence.length === sequence.length) {
+                recordData(); 
+                round++;
+                setTimeout(nextRound, 800);
+            }
+
+        } else {
+            
+            // --- ERROR LOGIC ---
+            roundErrors++;     // Track the error for your CSV data
+            userSequence = []; // Reset their progress to the start
+            
+            e.target.classList.add('wrong'); // Flash red
+            
+            setTimeout(() => {
+                e.target.classList.remove('wrong');
+                
+                // THIS IS THE KEY LINE:
+                // It calls the existing function that flashes the squares
+                playSequence(); 
+                
+            }, 400); // Wait 400ms after the red flash before replaying
+        }
+    };
+});
+
+        function recordData() {
+            const endTime = performance.now();
+            const rt = ((endTime - startTime) / 1000).toFixed(3);
+            resultsLog.push({
+                Mode: currentMode,
+                Round: round,
+                ResponseTime: rt,
+                Errors: roundErrors
+            });
+        }
+
+        async function finishCurrentMode() {
             if (heartbeatInterval) clearInterval(heartbeatInterval);
             document.body.classList.remove('mode-2-pulse');
             document.getElementById('game-ui').classList.add('hidden');
@@ -222,11 +313,10 @@
                 timerEl.classList.remove('hidden');
                 let count = 5;
                 timerEl.innerText = count;
-                
                 const interval = setInterval(() => {
                     count--;
-                    timerEl.innerText = count;
-                    if (count <= 0) {
+                    timerEl.innerText = count > 0 ? count : "GO!";
+                    if (count < 0) {
                         clearInterval(interval);
                         timerEl.classList.add('hidden');
                         resolve();
@@ -236,12 +326,26 @@
         }
 
         function showFinalResults() {
-            document.getElementById('game-ui').classList.add('hidden');
             document.getElementById('end-screen').classList.remove('hidden');
-            document.getElementById('final-results').innerHTML = `
-                Auditory Score: ${scores['Auditory'] || 0}<br>
-                Visual Score: ${scores['Visual'] || 0}
-            `;
+            let html = `<table class="results-table"><tr><th>Mode</th><th>Round</th><th>Time (s)</th><th>Errors</th></tr>`;
+            resultsLog.forEach(row => {
+                html += `<tr><td>${row.Mode}</td><td>${row.Round}</td><td>${row.ResponseTime}</td><td>${row.Errors}</td></tr>`;
+            });
+            html += `</table>`;
+            document.getElementById('final-results').innerHTML = html;
+        }
+
+        function downloadCSV() {
+            let csv = "Mode,Round,ResponseTime,Errors\n";
+            resultsLog.forEach(row => {
+                csv += `${row.Mode},${row.Round},${row.ResponseTime},${row.Errors}\n`;
+            });
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'mie286_experiment_results.csv';
+            a.click();
         }
     </script>
 </body>
