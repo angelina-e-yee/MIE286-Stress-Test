@@ -142,6 +142,9 @@
 
         const squares = document.querySelectorAll('.square');
         const feedbackMsg = document.getElementById('feedback-msg');
+        const MASTER_A = [4, 0, 8, 2, 6, 1, 7, 3, 5, 0]; 
+        const MASTER_B = [0, 8, 1, 7, 2, 6, 3, 5, 4, 8]; 
+        let currentMaster = [];
 
         document.getElementById('start-btn').addEventListener('click', function() {
             initDualGame();
@@ -162,9 +165,22 @@
                 showFinalResults();
                 return;
             }
+            
             currentMode = gameQueue.shift();
             round = 1;
+
+            // --- CHANGE THIS SECTION ---
+            if (currentMode === 'Auditory') {
+                // Auditory always uses A
+                currentMaster = MASTER_A; 
+            } else {
+                // Visual always uses B
+                currentMaster = MASTER_B; 
+            }
+            // ---------------------------
+
             document.getElementById('game-ui').classList.remove('hidden');
+            document.getElementById('mode-display').innerText = currentMode + " Mode";
             setupModeEffects();
             nextRound();
         }
@@ -222,7 +238,9 @@
             feedbackMsg.innerText = "";
             document.getElementById('round-display').innerText = `Round: ${round} / ${maxRounds}`;
             
-            sequence = Array.from({length: round}, () => Math.floor(Math.random() * 9));
+            // Pull the sequence for the current round
+            sequence = currentMaster.slice(0, round);
+            
             if (currentMode === 'Auditory') updateHeartbeat();
             else updateVisualPulse();
             
