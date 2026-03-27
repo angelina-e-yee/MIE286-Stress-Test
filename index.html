@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MIE286 Research Task - Fixed Sequence Sets</title>
+    <title>MIE286 Research Task - Controlled Experiment</title>
     <style>
         :root {
             --bg-color: #0a0a0a;
@@ -47,7 +47,7 @@
         .square.wrong { background-color: var(--error-color); border-color: #fff; }
         
         .hidden { display: none !important; }
-        .ui { text-align: center; max-width: 500px; padding: 20px; }
+        .ui { text-align: center; max-width: 600px; padding: 20px; }
         
         button {
             padding: 15px 35px;
@@ -94,7 +94,7 @@
 
     <div id="start-screen" class="ui">
         <h1>Sequence Memory Game</h1>
-        <h2>Click the squares in the same sequence as shown. There are 8 rounds, with sequence length increasing per round. Each round is a entirely new pattern. If you make a mistake, you must <b>try the sequence again</b>. You will complete 2 full games.</h2>
+        <h2>Click the squares in the same sequence as shown. There are 8 rounds, with sequence length increasing per round. Each round is a entirely new pattern. If you make a mistake, you must <b>try the sequence again</b>. You will complete 2 full games.</h2>    
         <button id="start-btn">Begin Challenge</button>
     </div>
 
@@ -127,7 +127,7 @@
     <script>
         let gameQueue = [];
         let currentMode = null;
-        let round = 1;
+        let round = 0; // Starts at 0 for the Practice Round
         const maxRounds = 8;
         let sequence = [];
         let userSequence = [];
@@ -142,10 +142,9 @@
         const squares = document.querySelectorAll('.square');
         const feedbackMsg = document.getElementById('feedback-msg');
 
-        // Pre-defined sequences for every round to ensure a controlled experiment.
-        // Auditory and Visual have different sequences, but every participant gets this exact set.
-        // AUDITORY Master: The baseline sequence
+        // Index 0 = Practice Round. Indices 1-8 = Recorded Rounds.
         const ROUNDS_AUDITORY = [
+            [4, 1],                   // Round 0 (Practice)
             [3],                      // Round 1
             [0, 8],                   // Round 2
             [2, 6, 1],                // Round 3
@@ -156,9 +155,9 @@
             [5, 2, 8, 1, 6, 4, 0, 3]  // Round 8
         ];
 
-        // VISUAL Master: Exactly the same difficulty, rotated 90-degrees clockwise.
-        // E.g., Square 0 (Top Left) becomes Square 2 (Top Right).
+        // 90-degree rotated equivalent
         const ROUNDS_VISUAL = [
+            [4, 5],                   // Round 0 (Practice)
             [1],                      // Round 1
             [2, 6],                   // Round 2
             [8, 0, 5],                // Round 3
@@ -189,7 +188,7 @@
                 return;
             }
             currentMode = gameQueue.shift();
-            round = 1;
+            round = 0; // Reset to practice round for the new mode
             document.getElementById('game-ui').classList.remove('hidden');
             setupModeEffects();
             nextRound();
@@ -242,13 +241,20 @@
             }
             userSequence = [];
             roundErrors = 0;
-            feedbackMsg.innerText = "";
-            document.getElementById('round-display').innerText = `Round: ${round} / ${maxRounds}`;
             
-            // KEY CHANGE: Pull the exact predefined array based on mode and current round
-            // (Subtracting 1 because arrays are 0-indexed, but rounds start at 1)
+            // UI Logic for Practice vs Real Rounds
+            if (round === 0) {
+                document.getElementById('round-display').innerText = `Practice Round`;
+                feedbackMsg.style.color = "var(--active-color)"; 
+                feedbackMsg.innerText = "Try clicking the wrong square to see the penalty!";
+            } else {
+                document.getElementById('round-display').innerText = `Round: ${round} / ${maxRounds}`;
+                feedbackMsg.style.color = "var(--error-color)";
+                feedbackMsg.innerText = "";
+            }
+            
             let masterPool = currentMode === 'Auditory' ? ROUNDS_AUDITORY : ROUNDS_VISUAL;
-            sequence = [...masterPool[round - 1]]; 
+            sequence = [...masterPool[round]]; 
             
             if (currentMode === 'Auditory') updateHeartbeat();
             else updateVisualPulse();
@@ -285,6 +291,7 @@
                 } else {
                     roundErrors++;
                     userSequence = []; 
+                    feedbackMsg.style.color = "var(--error-color)";
                     feedbackMsg.innerText = "Error! Watch carefully...";
                     e.target.classList.add('wrong');
                     setTimeout(() => {
@@ -296,6 +303,9 @@
         });
 
         function recordData() {
+            // DO NOT LOG THE PRACTICE ROUND
+            if (round === 0) return; 
+
             const endTime = performance.now();
             const rt = ((endTime - startTime) / 1000).toFixed(3);
             resultsLog.push({ Mode: currentMode, Round: round, ResponseTime: rt, Errors: roundErrors });
