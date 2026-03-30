@@ -94,6 +94,7 @@
 
     <div id="start-screen" class="ui">
         <h1>Sequence Memory Game</h1>
+        <input type="text" id="player-id" placeholder="Enter Player Name" style="padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #ccc;"><br>
         <h2>Click the squares in the same sequence as shown. There are 8 rounds, with sequence length increasing per round. Each round is a entirely new pattern. If you make a mistake, you must <b>try the sequence again</b>. You will complete 2 full games.</h2>    
         <button id="start-btn">Begin Challenge</button>
     </div>
@@ -125,50 +126,41 @@
     </div>
 
     <script>
+        let playerID = "Anonymous";
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby3tXd7Epyh_GJfU7QYdS0AU5Bw6q6Pvl6knXf6B1cYZ9PWr0X6MQE-tM4fRfEEaLC3jA/exec";
+        
         let gameQueue = [];
         let currentMode = null;
-        let round = 0; // Starts at 0 for the Practice Round
-        const maxRounds = 8;
+        let round = 0; 
+        let hasPracticed = false; // NEW: Flag to track if the practice round is done
+        const maxRounds = 8; 
         let sequence = [];
         let userSequence = [];
         let isPlayingSequence = false;
         let audioCtx = null; 
         let heartbeatInterval = null;
         
-        let startTime;
+        let totalActiveTime = 0;
+        let inputStartTime = 0;
         let roundErrors = 0;
-        let resultsLog = []; 
+        let resultsLog = [];
 
         const squares = document.querySelectorAll('.square');
         const feedbackMsg = document.getElementById('feedback-msg');
 
-        // Index 0 = Practice Round. Indices 1-8 = Recorded Rounds.
         const ROUNDS_AUDITORY = [
-            [4, 1],                   // Round 0 (Practice)
-            [3],                      // Round 1
-            [0, 8],                   // Round 2
-            [2, 6, 1],                // Round 3
-            [7, 3, 5, 0],             // Round 4
-            [8, 2, 4, 1, 6],          // Round 5
-            [3, 7, 0, 5, 8, 2],       // Round 6
-            [1, 6, 4, 8, 0, 3, 7],    // Round 7
-            [5, 2, 8, 1, 6, 4, 0, 3]  // Round 8
+            [4, 1], [3], [0, 8], [2, 6, 1], [7, 3, 5, 0], 
+            [8, 2, 4, 1, 6], [3, 7, 0, 5, 8, 2], [1, 6, 4, 8, 0, 3, 7], [5, 2, 8, 1, 6, 4, 0, 3]
         ];
 
-        // 90-degree rotated equivalent
         const ROUNDS_VISUAL = [
-            [4, 5],                   // Round 0 (Practice)
-            [1],                      // Round 1
-            [2, 6],                   // Round 2
-            [8, 0, 5],                // Round 3
-            [3, 1, 7, 2],             // Round 4
-            [6, 8, 4, 5, 0],          // Round 5
-            [1, 3, 2, 7, 6, 8],       // Round 6
-            [5, 0, 4, 6, 2, 1, 3],    // Round 7
-            [7, 8, 6, 5, 0, 4, 2, 1]  // Round 8
+            [4, 5], [1], [2, 6], [8, 0, 5], [3, 1, 7, 2], 
+            [6, 8, 4, 5, 0], [1, 3, 2, 7, 6, 8], [5, 0, 4, 6, 2, 1, 3], [7, 8, 6, 5, 0, 4, 2, 1]
         ];
 
         document.getElementById('start-btn').addEventListener('click', function() {
+            const input = document.getElementById('player-id');
+            if (input && input.value) playerID = input.value;
             initDualGame();
         });
 
@@ -182,13 +174,74 @@
             startNextGameFromQueue();
         }
 
+        // --- DATA COLLECTION LOGIC ---
+        async function sendToGoogleSheets() {
+            const payload = {
+                playerID: playerID,
+                results: resultsLog
+            };
+
+            try {
+                await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+                    body: JSON.stringify(payload)
+                });
+                console.log("Data successfully sent to spreadsheet!");
+            } catch (error) {
+                console.error("Error sending data:", error);
+            }
+        }
+
+        function recordData() {
+            if (round === 0) return; 
+            const rt = (totalActiveTime / 1000).toFixed(3);
+            resultsLog.push({ Mode: currentMode, Round: round, ResponseTime: rt, Errors: roundErrors });
+        }
+
+        function showFinalResults() {
+            document.getElementById('end-screen').classList.remove('hidden');
+            
+            sendToGoogleSheets();
+
+            let html = `<table class="results-table"><tr><th>Mode</th><th>Round</th><th>Time (s)</th><th>Errors</th></tr>`;
+            resultsLog.forEach(row => {
+                html += `<tr><td>${row.Mode}</td><td>${row.Round}</td><td>${row.ResponseTime}</td><td>${row.Errors}</td></tr>`;
+            });
+            html += `</table>`;
+            document.getElementById('final-results').innerHTML = html;
+        }
+
+        function downloadCSV() {
+            let csv = "PlayerID,Mode,Round,ResponseTime,Errors\n";
+            resultsLog.forEach(row => {
+                csv += `${playerID},${row.Mode},${row.Round},${row.ResponseTime},${row.Errors}\n`;
+            });
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `mie286_experiment_${playerID}.csv`;
+            a.click();
+        }
+
+        // --- GAME ENGINE LOGIC ---
         async function startNextGameFromQueue() {
             if (gameQueue.length === 0) {
                 showFinalResults();
                 return;
             }
             currentMode = gameQueue.shift();
-            round = 0; // Reset to practice round for the new mode
+            
+            // NEW: Check if the practice round has been played yet
+            if (!hasPracticed) {
+                round = 0; // Play practice round
+                hasPracticed = true; // Mark as done for the next game
+            } else {
+                round = 1; // Skip practice round, go straight to round 1
+            }
+            
             document.getElementById('game-ui').classList.remove('hidden');
             setupModeEffects();
             nextRound();
@@ -241,8 +294,8 @@
             }
             userSequence = [];
             roundErrors = 0;
+            totalActiveTime = 0; 
             
-            // UI Logic for Practice vs Real Rounds
             if (round === 0) {
                 document.getElementById('round-display').innerText = `Practice Round`;
                 feedbackMsg.style.color = "var(--active-color)"; 
@@ -255,10 +308,6 @@
             
             let masterPool = currentMode === 'Auditory' ? ROUNDS_AUDITORY : ROUNDS_VISUAL;
             sequence = [...masterPool[round]]; 
-            
-            if (currentMode === 'Auditory') updateHeartbeat();
-            else updateVisualPulse();
-            
             playSequence();
         }
 
@@ -272,12 +321,16 @@
                 await new Promise(r => setTimeout(r, 250));
             }
             isPlayingSequence = false;
-            startTime = performance.now(); 
+            inputStartTime = performance.now(); 
         }
 
         squares.forEach(sq => {
             sq.onclick = (e) => {
                 if (isPlayingSequence) return; 
+
+                totalActiveTime += (performance.now() - inputStartTime);
+                inputStartTime = performance.now();
+
                 const idx = parseInt(e.target.dataset.index);
                 if (idx === sequence[userSequence.length]) {
                     e.target.classList.add('highlight');
@@ -301,15 +354,6 @@
                 }
             };
         });
-
-        function recordData() {
-            // DO NOT LOG THE PRACTICE ROUND
-            if (round === 0) return; 
-
-            const endTime = performance.now();
-            const rt = ((endTime - startTime) / 1000).toFixed(3);
-            resultsLog.push({ Mode: currentMode, Round: round, ResponseTime: rt, Errors: roundErrors });
-        }
 
         async function finishCurrentMode() {
             if (heartbeatInterval) clearInterval(heartbeatInterval);
@@ -339,29 +383,6 @@
                     }
                 }, 1000);
             });
-        }
-
-        function showFinalResults() {
-            document.getElementById('end-screen').classList.remove('hidden');
-            let html = `<table class="results-table"><tr><th>Mode</th><th>Round</th><th>Time (s)</th><th>Errors</th></tr>`;
-            resultsLog.forEach(row => {
-                html += `<tr><td>${row.Mode}</td><td>${row.Round}</td><td>${row.ResponseTime}</td><td>${row.Errors}</td></tr>`;
-            });
-            html += `</table>`;
-            document.getElementById('final-results').innerHTML = html;
-        }
-
-        function downloadCSV() {
-            let csv = "Mode,Round,ResponseTime,Errors\n";
-            resultsLog.forEach(row => {
-                csv += `${row.Mode},${row.Round},${row.ResponseTime},${row.Errors}\n`;
-            });
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'mie286_experiment_results.csv';
-            a.click();
         }
     </script>
 </body>
