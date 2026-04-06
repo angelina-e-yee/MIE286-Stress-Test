@@ -49,6 +49,20 @@ print(wide_errors)
 cat("\n--- Time Totals (wide) ---\n")
 print(wide_time)
 
+# --- Check for incomplete data ---
+cat("\n--- Data Completeness ---\n")
+cat("Participants recruited:", length(unique(data$name)), "\n")
+cat("Complete pairs (errors):", sum(complete.cases(wide_errors[, c("Auditory", "Visual")])), "\n")
+cat("Complete pairs (time):", sum(complete.cases(wide_time[, c("Auditory", "Visual")])), "\n")
+
+# Remove incomplete cases
+wide_errors <- wide_errors[complete.cases(wide_errors[, c("Auditory", "Visual")]), ]
+wide_time   <- wide_time[complete.cases(wide_time[, c("Auditory", "Visual")]), ]
+wide_errors$diff <- wide_errors$Auditory - wide_errors$Visual
+wide_time$diff   <- wide_time$Auditory - wide_time$Visual
+
+cat("Participants retained for analysis:", nrow(wide_errors), "\n")
+
 
 # ============================================================
 # --- 3. DESCRIPTIVE STATISTICS ---
@@ -278,20 +292,58 @@ cat("\nNote: Shapiro p > 0.05 indicates normality assumption is met.\n")
 cat("Note: p_value < 0.05 would indicate a significant difference.\n")
 
 
-# ---------------------
-# Correlation on the Speed vs Accuracy trade-off
-#------------
+# ============================================================
+# --- 8b. SPEED-ACCURACY TRADE-OFF (Independence-preserving) ---
+# ============================================================
 
-# Speed-Accuracy Trade-off: Correlation
-cor_test <- cor.test(totals$total_time, totals$total_errors, method = "pearson")
-print(cor_test)
+# The pooled correlation (all 54 obs) violates independence because
+# each participant contributes two non-independent points.
+# Instead, we compute per-condition correlations.
 
-# Scatterplot
+cat("\n========== SPEED-ACCURACY TRADE-OFF ==========\n")
+
+# --- Per-condition correlations ---
+cat("\n--- Auditory Condition ---\n")
+aud_data <- totals[totals$round_type == "Auditory", ]
+cor_aud <- cor.test(aud_data$total_time, aud_data$total_errors, method = "pearson")
+print(cor_aud)
+
+cat("\n--- Visual Condition ---\n")
+vis_data <- totals[totals$round_type == "Visual", ]
+cor_vis <- cor.test(vis_data$total_time, vis_data$total_errors, method = "pearson")
+print(cor_vis)
+
+# --- Participant-level averaged correlation ---
+# Average each participant's time and errors across both conditions
+# to get one independent observation per person
+cat("\n--- Participant-Averaged (collapsed across conditions) ---\n")
+participant_avg <- totals %>%
+  group_by(name) %>%
+  summarise(
+    avg_time   = mean(total_time),
+    avg_errors = mean(total_errors),
+    .groups = "drop"
+  )
+cor_avg <- cor.test(participant_avg$avg_time, participant_avg$avg_errors, method = "pearson")
+print(cor_avg)
+
+# --- Scatterplot (per-condition, with separate regression lines) ---
+par(mfrow = c(1, 1))
 plot(totals$total_time, totals$total_errors,
-     main = "Speed-Accuracy Trade-off",
+     main = "Speed-Accuracy Trade-off by Condition",
      xlab = "Total Time (s)",
      ylab = "Total Errors",
      pch = 19,
      col = ifelse(totals$round_type == "Auditory", "blue", "orange"))
-abline(lm(total_errors ~ total_time, data = totals), col = "red", lwd = 2)
-legend("topright", legend = c("Auditory", "Visual"), col = c("blue", "orange"), pch = 19)
+
+# Separate regression lines per condition
+abline(lm(total_errors ~ total_time, data = aud_data), col = "blue", lwd = 2, lty = 2)
+abline(lm(total_errors ~ total_time, data = vis_data), col = "orange", lwd = 2, lty = 2)
+
+legend("topright",
+       legend = c(
+         paste0("Auditory (r = ", round(cor_aud$estimate, 3), ", p = ", round(cor_aud$p.value, 3), ")"),
+         paste0("Visual (r = ", round(cor_vis$estimate, 3), ", p = ", round(cor_vis$p.value, 3), ")")
+       ),
+       col = c("blue", "orange"),
+       pch = 19, lty = 2, lwd = 2, cex = 0.8)
